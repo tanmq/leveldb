@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <string>
+#include <port/port_posix.h>
 #include "leveldb/slice.h"
 #include "port/port.h"
 
