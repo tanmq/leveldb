@@ -1247,15 +1247,17 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* my_batch) {
 // REQUIRES: First writer must have a non-NULL batch
 WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
   assert(!writers_.empty());
-  Writer* first = writers_.front();
+  Writer* first = writers_.front();  //当前执行的writer兄弟
   WriteBatch* result = first->batch;
   assert(result != NULL);
 
-  size_t size = WriteBatchInternal::ByteSize(first->batch); // 计算要写入的byte大小
+  size_t size = WriteBatchInternal::ByteSize(first->batch); // 计算要自己要写入的byte大小
 
   // Allow the group to grow up to a maximum size, but if the
   // original write is small, limit the growth so we do not slow
   // down the small write too much.
+
+  //计算maxsize,避免自己帮太多忙了导致写入数据过大
   size_t max_size = 1 << 20;
   if (size <= (128<<10)) {
     max_size = size + (128<<10);
@@ -1266,14 +1268,14 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
   ++iter;  // Advance past "first"
   for (; iter != writers_.end(); ++iter) {
     Writer* w = *iter;
-    if (w->sync && !first->sync) {
+    if (w->sync && !first->sync) { //sync类型不同,你的活我不帮你了
       // Do not include a sync write into a batch handled by a non-sync write.
       break;
     }
 
     if (w->batch != NULL) {
       size += WriteBatchInternal::ByteSize(w->batch);
-      if (size > max_size) {
+      if (size > max_size) {      //这个帮忙数据量过大了,我也不帮忙了
         // Do not make batch too big
         break;
       }
@@ -1283,7 +1285,7 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
         // Switch to temporary batch instead of disturbing caller's batch
         result = tmp_batch_;
         assert(WriteBatchInternal::Count(result) == 0);
-        WriteBatchInternal::Append(result, first->batch);
+        WriteBatchInternal::Append(result, first->batch); //来吧,你的活我可以帮你干了
       }
       WriteBatchInternal::Append(result, w->batch);
     }
@@ -1295,18 +1297,19 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
 // REQUIRES: mutex_ is held
 // REQUIRES: this thread is currently at the front of the writer queue
 Status DBImpl::MakeRoomForWrite(bool force) { // force代表需要强制compaction与否
-  mutex_.AssertHeld();
+  mutex_.AssertHeld();        //保证进入该函数前已经加锁
   assert(!writers_.empty());
-  bool allow_delay = !force;
+  bool allow_delay = !force;  //allow_delay代表compaction可以延后
   Status s;
   while (true) {
-    if (!bg_error_.ok()) {
+    if (!bg_error_.ok()) {    //如果后台任务已经出错,直接返回错误
       // Yield previous error
       s = bg_error_;
       break;
-    } else if (
+    } else if (//level0的文件数限制超过8,睡眠1ms,简单等待后台任务执行
         allow_delay &&
-        versions_->NumLevelFiles(0) >= config::kL0_SlowdownWritesTrigger) { //level0的文件数限制超过8,睡眠1ms
+        versions_->NumLevelFiles(0) >= config::kL0_SlowdownWritesTrigger) { //level 0超过8个sst文件了
+
       // We are getting close to hitting a hard limit on the number of
       // L0 files.  Rather than delaying a single write by several
       // seconds when we hit the hard limit, start delaying each
@@ -1335,7 +1338,7 @@ Status DBImpl::MakeRoomForWrite(bool force) { // force代表需要强制compacti
       assert(versions_->PrevLogNumber() == 0);
       uint64_t new_log_number = versions_->NewFileNumber();
       WritableFile* lfile = NULL;
-      s = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &lfile);
+      s = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &lfile); //生成新的log文件
       if (!s.ok()) {
         // Avoid chewing through file number space in a tight loop.
         versions_->ReuseFileNumber(new_log_number);
@@ -1353,7 +1356,7 @@ Status DBImpl::MakeRoomForWrite(bool force) { // force代表需要强制compacti
       mem_ = new MemTable(internal_comparator_);
       mem_->Ref();
       force = false;   // Do not force another compaction if have room
-      MaybeScheduleCompaction();
+      MaybeScheduleCompaction();  //如果需要进行compaction,后台执行
     }
   }
   return s;
